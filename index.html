@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebRTC Camera Stream</title>
+    <style>
+        video {
+            width: 100%;
+            max-width: 640px;
+            height: auto;
+            border: 1px solid black;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>受信映像 (PC側)</h2>
+    <video id="remoteVideo" autoplay playsinline></video>
+    <p>接続ステータス: <span id="status">待機中...</span></p>
+    
+    <hr>
+    
+    <h2>送信映像 (スマホ側)</h2>
+    <video id="localVideo" autoplay muted playsinline></video>
+    <button id="startButton">カメラをONにする (スマホ側)</button>
+    <button id="callButton" disabled>PCに接続</button>
+
+    <script>
+        // WebRTC関連の変数
+        const localVideo = document.getElementById('localVideo');
+        const remoteVideo = document.getElementById('remoteVideo');
+        const startButton = document.getElementById('startButton');
+        const callButton = document.getElementById('callButton');
+        const statusElement = document.getElementById('status');
+        
+        let localStream;
+        let pc; // RTCPeerConnection
+
+        // ⚠️ シグナリングサーバーのWebSocket接続 (実際にはサーバーURLに置き換える必要があります)
+        // const ws = new WebSocket('ws://your-signaling-server:8080'); 
+
+        // 接続情報 (STUNサーバー)
+        const configuration = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' }
+            ]
+        };
+
+        // --- 1. カメラ映像の取得 (スマホ側) ---
+        startButton.onclick = async () => {
+            try {
+                // スマホの背面カメラを優先的に取得
+                const constraints = {
+                    video: { facingMode: { exact: "environment" } },
+                    audio: true
+                };
+                localStream = await navigator.mediaDevices.getUserMedia(constraints);
+                localVideo.srcObject = localStream;
+                callButton.disabled = false;
+                startButton.disabled = true;
+            } catch (e) {
+                console.error('カメラアクセスエラー:', e);
+                alert(`カメラにアクセスできませんでした: ${e.name}`);
+            }
+        };
+
+        // --- 2. 接続の開始 (スマホ側がPCに接続を試みる) ---
+        callButton.onclick = async () => {
+            pc = new RTCPeerConnection(configuration);
+
+            // ローカルストリームのトラックをPeerConnectionに追加
+            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+            // リモートトラックを受信したときの処理 (PC側で実行される)
+            pc.ontrack = (event) => {
+                if (remoteVideo.srcObject !== event.streams[0]) {
+                    remoteVideo.srcObject = event.streams[0];
+                    statusElement.textContent = '接続済み';
+                }
+            };
+            
+            // ICE候補 (ネットワーク情報) が生成されたときの処理
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    // ⚠️ シグナリングサーバー経由で相手にICE候補を送る必要があります
+                    // ws.send(JSON.stringify({ type: 'ice-candidate', candidate: event.candidate }));
+                    console.log('ICE Candidate:', event.candidate);
+                }
+            };
+            
+            statusElement.textContent = '接続試行中...';
+
+            // Offerの作成 (SDPの生成)
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+
+            // ⚠️ シグナリングサーバー経由で相手 (PC) にOfferを送る必要があります
+            // ws.send(JSON.stringify({ type: 'offer', sdp: pc.localDescription }));
+            console.log('Offer SDP:', pc.localDescription.sdp);
+
+            callButton.disabled = true;
+        };
+
+        // --- 3. 相手からのSDPやICE候補を受信したときの処理 (シグナリングサーバーが必要) ---
+        /*
+        ws.onmessage = async (event) => {
+            const message = JSON.parse(event.data);
+            
+            if (!pc) {
+                // 受信側 (PC) がOfferを受け取った場合
+                if (message.type === 'offer') {
+                    pc = new RTCPeerConnection(configuration);
+                    // (pc.ontrackとpc.onicecandidateの設定は上記と同じ)
+                    
+                    await pc.setRemoteDescription(new RTCSessionDescription(message));
+                    
+                    // Answerの作成
+                    const answer = await pc.createAnswer();
+                    await pc.setLocalDescription(answer);
+
+                    // ⚠️ シグナリングサーバー経由で相手 (スマホ) にAnswerを送る
+                    // ws.send(JSON.stringify({ type: 'answer', sdp: pc.localDescription }));
+                    
+                    statusElement.textContent = '映像受信中...';
+                }
+            } else if (message.type === 'answer') {
+                // 送信側 (スマホ) がAnswerを受け取った場合
+                await pc.setRemoteDescription(new RTCSessionDescription(message));
+            } else if (message.type === 'ice-candidate') {
+                // ICE候補の追加
+                await pc.addIceCandidate(new RTCIceCandidate(message.candidate));
+            }
+        };
+        */
+        
+    </script>
+</body>
+</html>
